@@ -121,5 +121,77 @@ public class EventsController : ControllerBase
         return Ok(ToDto(ev));
     }
 
-    // PUT and DELETE are added in Part C
+    /// <summary>Updates one of your own events (Organisers only).</summary>
+    /// <response code="200">Event updated.</response>
+    /// <response code="400">Invalid event details.</response>
+    /// <response code="401">Not logged in.</response>
+    /// <response code="403">Insufficient role, or not the organiser of this event.</response>
+    /// <response code="404">Event not found.</response>
+    [HttpPut("{eventId:int}")]
+    [SessionAuthorize(UserRole.Organiser)]
+    [ProducesResponseType(typeof(EventDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdateEvent(int eventId, UpdateEventDto dto)
+    {
+        var ev = await _db.Events.Include(e => e.Categories).FirstOrDefaultAsync(e => e.EventId == eventId);
+        if (ev == null) return NotFound(new { message = "Event not found." });
+
+        if (ev.OrganiserId != _session.GetUserId())
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = "You can only change your own events." });
+
+        if (dto.RegistrationDeadline.Date > dto.EventDate.Date)
+            return BadRequest(new { message = "Registration deadline must be on or before the event date." });
+
+        if (!string.IsNullOrWhiteSpace(dto.Status))
+        {
+            var status = AllowedStatuses.FirstOrDefault(s => s.Equals(dto.Status.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (status == null)
+                return BadRequest(new { message = "Status must be Scheduled, Ongoing, Completed or Cancelled." });
+            ev.Status = status;
+        }
+
+        ev.Title = dto.Title.Trim();
+        ev.Description = dto.Description.Trim();
+        ev.City = dto.City.Trim();
+        ev.EventType = dto.EventType;
+        ev.EventDate = dto.EventDate.Date;
+        ev.RegistrationDeadline = dto.RegistrationDeadline.Date;
+
+        await _db.SaveChangesAsync();
+        return Ok(ToDto(ev));
+    }
+
+    /// <summary>Deletes one of your own events (Organisers only).</summary>
+    /// <response code="204">Event deleted.</response>
+    /// <response code="401">Not logged in.</response>
+    /// <response code="403">Insufficient role, or not the organiser of this event.</response>
+    /// <response code="404">Event not found.</response>
+    /// <response code="409">Event has enrolments, so it cannot be deleted. Cancel it instead.</response>
+    [HttpDelete("{eventId:int}")]
+    [SessionAuthorize(UserRole.Organiser)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> DeleteEvent(int eventId)
+    {
+        var ev = await _db.Events.FirstOrDefaultAsync(e => e.EventId == eventId);
+        if (ev == null) return NotFound(new { message = "Event not found." });
+
+        if (ev.OrganiserId != _session.GetUserId())
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = "You can only delete your own events." });
+
+        // Enrolments block deletion (database uses Restrict), so check first
+        var hasEnrolments = await _db.Enrolments.AnyAsync(en => en.Category!.EventId == eventId);
+        if (hasEnrolments)
+            return Conflict(new { message = "This event has enrolments. Set its status to Cancelled instead of deleting it." });
+
+        _db.Events.Remove(ev);
+        await _db.SaveChangesAsync();
+        return NoContent();
+    }
 }
