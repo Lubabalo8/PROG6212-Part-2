@@ -4,6 +4,7 @@ using RaceDay.Api.Data;
 using RaceDay.Api.DTOs;
 using RaceDay.Api.Models;
 using RaceDay.Api.Services;
+using RaceDay.Api.Filters;
 
 namespace RaceDay.Api.Controllers;
 
@@ -87,8 +88,11 @@ public class AuthController : ControllerBase
 
     /// <summary>Ends the current session.</summary>
     /// <response code="200">Logged out.</response>
+    /// <response code="401">Not logged in.</response>
     [HttpPost("logout")]
+    [SessionAuthorize]
     [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public IActionResult Logout()
     {
         _session.SignOut();
